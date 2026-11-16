@@ -227,6 +227,17 @@ window.__ModuleLoader__.load({
 .ch-input:focus{outline:none;border-color:var(--dsw-alias-label-caption)}
 .ch-input:disabled{opacity:.6;cursor:default}
 .ch-textarea{min-height:64px;resize:vertical;font-family:var(--ds-font-family-code)}
+.ch-select{position:relative;min-width:0}
+.ch-select-btn{box-sizing:border-box;width:100%;min-height:32px;display:flex;align-items:center;justify-content:space-between;gap:8px;border:0.5px solid var(--dsw-alias-border-l4);border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;padding:0 10px;text-align:left;cursor:pointer}
+.ch-select-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+.ch-select-btn:disabled{opacity:.6;cursor:default}
+.ch-select-value{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ch-select-chevron{flex:none;font-size:10px;line-height:1;color:var(--dsw-alias-label-caption);transform:translateY(1px)}
+.ch-select-menu{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:40;display:flex;flex-direction:column;gap:2px;padding:4px;max-height:260px;overflow:auto;border-radius:10px;background:var(--dsw-alias-bg-layer-1);border:0.5px solid var(--dsw-alias-border-l4);box-shadow:0 12px 32px rgba(0,0,0,.18)}
+.ch-select-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border:none;border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.ch-select-item:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.ch-select-item.is-active{font-weight:500}
+.ch-select-check{color:var(--dsw-alias-label-caption);font-size:11px}
 .ch-form-actions{display:flex;justify-content:flex-end;gap:8px}
 .ch-foot{margin-top:26px;display:flex;justify-content:space-between;gap:12px;color:var(--dsw-alias-label-caption);font-size:12px}
 `
@@ -287,6 +298,68 @@ window.__ModuleLoader__.load({
       ])
     }
 
+    /**
+     * 轻量下拉：按钮 + 浮层列表。
+     * 不用原生 <select>：Electron 里原生下拉的弹层是窗口级的，点开有明显延迟，
+     * 而且样式无法与页面统一。这里用按钮 + 绝对定位浮层，点击即时显示。
+     */
+    function ChSelect({ value, options, onChange, disabled, label }) {
+      const [open, setOpen] = React.useState(false)
+      const ref = React.useRef(null)
+      React.useEffect(() => {
+        if (!open) return undefined
+        const onPointer = (event) => {
+          const host = ref.current
+          if (host !== null && !host.contains(event.target)) setOpen(false)
+        }
+        const onKey = (event) => {
+          if (event.key === 'Escape') setOpen(false)
+        }
+        document.addEventListener('mousedown', onPointer)
+        document.addEventListener('keydown', onKey)
+        return () => {
+          document.removeEventListener('mousedown', onPointer)
+          document.removeEventListener('keydown', onKey)
+        }
+      }, [open])
+      const current = options.find(option => option.value === value) ?? options[0]
+      return h('div', { className: 'ch-select', ref }, [
+        h('button', {
+          key: 'btn', type: 'button', className: 'ch-select-btn', disabled,
+          'aria-haspopup': 'listbox',
+          'aria-expanded': open ? 'true' : 'false',
+          'aria-label': label,
+          onClick: () => setOpen(previous => !previous),
+          onKeyDown: (event) => {
+            if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              setOpen(true)
+            }
+          },
+        }, [
+          h('span', { key: 'l', className: 'ch-select-value' }, current?.label ?? ''),
+          h('span', { key: 'c', className: 'ch-select-chevron' }, '▾'),
+        ]),
+        open
+          ? h('div', { key: 'menu', className: 'ch-select-menu', role: 'listbox' },
+            options.map(option => h('button', {
+              key: option.value,
+              type: 'button',
+              role: 'option',
+              'aria-selected': option.value === value ? 'true' : 'false',
+              className: `ch-select-item${option.value === value ? ' is-active' : ''}`,
+              onClick: () => {
+                onChange(option.value)
+                setOpen(false)
+              },
+            }, [
+              h('span', { key: 'l' }, option.label),
+              option.value === value ? h('span', { key: 'k', className: 'ch-select-check' }, '✓') : null,
+            ])))
+          : null,
+      ])
+    }
+
     /** 编辑 / 新增表单。 */
     function ConnectorForm({ initial, tr, onCancel, onSubmit }) {
       const locked = initial?.builtin === true
@@ -330,24 +403,26 @@ window.__ModuleLoader__.load({
         h('div', { key: 't', className: 'ch-form-title' }, initial ? `${tr('edit')} · ${initial.title || initial.name}` : tr('add')),
         h('div', { key: 'k', className: 'ch-field' }, [
           h('span', { key: 'l', className: 'ch-label' }, tr('kind')),
-          h('select', {
-            key: 'i', className: 'ch-input', value: draft.kind, disabled: locked,
-            onChange: event => set({ kind: event.target.value }),
-          }, [
-            h('option', { key: 'mcp', value: 'mcp' }, tr('kindMcp')),
-            h('option', { key: 'rest', value: 'rest' }, tr('kindRest')),
-          ]),
+          h(ChSelect, {
+            key: 'i', value: draft.kind, disabled: locked, label: tr('kind'),
+            options: [
+              { value: 'mcp', label: tr('kindMcp') },
+              { value: 'rest', label: tr('kindRest') },
+            ],
+            onChange: value => set({ kind: value }),
+          }),
         ]),
         draft.kind === 'mcp'
           ? h('div', { key: 'tr', className: 'ch-field' }, [
             h('span', { key: 'l', className: 'ch-label' }, tr('transport')),
-            h('select', {
-              key: 'i', className: 'ch-input', value: draft.transport, disabled: locked,
-              onChange: event => set({ transport: event.target.value }),
-            }, [
-              h('option', { key: 'http', value: 'streamable-http' }, tr('transportHttp')),
-              h('option', { key: 'stdio', value: 'stdio' }, tr('transportStdio')),
-            ]),
+            h(ChSelect, {
+              key: 'i', value: draft.transport, disabled: locked, label: tr('transport'),
+              options: [
+                { value: 'streamable-http', label: tr('transportHttp') },
+                { value: 'stdio', label: tr('transportStdio') },
+              ],
+              onChange: value => set({ transport: value }),
+            }),
           ])
           : null,
         h('div', { key: 'n', className: 'ch-field' }, [
