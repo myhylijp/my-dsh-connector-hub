@@ -1,0 +1,10 @@
+# Connector hub — 一行 Host 插件：维护连接器清单（可增删改），mcp 类型的连接器交给
+# MCP 管理器托管；rest 类型只是登记一个 RESTful API 基地址（供后续插件读取）。
+# Client 半边在 client.js，侧栏入口由它注册。
+#
+# 本行默认不带任何预置连接器。部署方可在 config.defaults 里给出自己的初始清单：
+# 首次运行时作为种子写入 <dshHome>/connector-hub/connectors.json，同时作为
+# 「内置连接器」的基准（可恢复默认、不可删除）；升级不会覆盖用户改过的内容。
+- insert:
+    - id: connector-hub
+      name: 'my-dsh-connector-hub'

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Connectors",
+    "description": "Lists the MCP servers configured for this deployment as cards with server, transport and URL, and probes each connector with one initialize request."
+  }
+}
