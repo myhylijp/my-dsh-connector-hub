@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     /** Host 路由。 */
     const ROUTE = 'api/connector-hub'
     /** Client 构建标记，页脚显示。 */
-    const UI_REVISION = '2026-11-15.1'
+    const UI_REVISION = '2026-11-16.1'
 
     const zh = {
       panel: '连接器',
@@ -41,6 +41,18 @@ window.__ModuleLoader__.load({
       kind: '连接类型',
       kindMcp: 'MCP',
       kindRest: 'RESTful API',
+      transport: '传输方式',
+      transportHttp: '流式 HTTP（streamable-http）',
+      transportStdio: '本地进程（stdio）',
+      transportHttpTag: 'HTTP',
+      transportStdioTag: 'stdio',
+      command: '命令',
+      args: '参数',
+      argsHint: '一行一个参数，按顺序传给命令',
+      env: '环境变量',
+      envHint: '一行一个，形如 KEY=VALUE；留空则沿用系统环境',
+      cwd: '工作目录',
+      cwdHint: '留空则用进程当前目录',
       serverName: '服务名',
       displayName: '显示名',
       url: '地址',
@@ -89,6 +101,18 @@ window.__ModuleLoader__.load({
       kind: 'Type',
       kindMcp: 'MCP',
       kindRest: 'RESTful API',
+      transport: 'Transport',
+      transportHttp: 'Streamable HTTP',
+      transportStdio: 'Local process (stdio)',
+      transportHttpTag: 'HTTP',
+      transportStdioTag: 'stdio',
+      command: 'Command',
+      args: 'Arguments',
+      argsHint: 'One argument per line, passed in order',
+      env: 'Environment',
+      envHint: 'One per line, KEY=VALUE. Leave empty to inherit the environment.',
+      cwd: 'Working directory',
+      cwdHint: 'Leave empty to use the process cwd',
       serverName: 'Server name',
       displayName: 'Display name',
       url: 'URL',
@@ -209,6 +233,20 @@ window.__ModuleLoader__.load({
 
     /** headers 对象 <-> 文本。 */
     const headersToText = (headers) => Object.entries(headers ?? {}).map(([k, v]) => `${k}: ${v}`).join('\n')
+    /** 环境变量：KEY=VALUE 一行一个。 */
+    const envToText = (env) => Object.entries(env ?? {}).map(([k, v]) => `${k}=${v}`).join('\n')
+    const textToEnv = (text) => {
+      const out = {}
+      for (const line of String(text ?? '').split(/\r?\n/)) {
+        const trimmed = line.trim()
+        if (trimmed === '') continue
+        const index = trimmed.indexOf('=')
+        if (index <= 0) continue
+        out[trimmed.slice(0, index).trim()] = trimmed.slice(index + 1).trim()
+      }
+      return out
+    }
+
     const textToHeaders = (text) => {
       const out = {}
       for (const line of String(text ?? '').split(/\r?\n/)) {
@@ -256,8 +294,13 @@ window.__ModuleLoader__.load({
         name: initial?.name ?? '',
         title: initial?.title ?? '',
         kind: initial?.kind ?? 'mcp',
+        transport: initial?.transport === 'stdio' ? 'stdio' : 'streamable-http',
         url: initial?.url ?? '',
         headersText: headersToText(initial?.headers),
+        command: initial?.command ?? '',
+        argsText: Array.isArray(initial?.args) ? initial.args.join('\n') : '',
+        envText: envToText(initial?.env),
+        cwd: initial?.cwd ?? '',
         enabled: initial?.enabled !== false,
       }))
       const [busy, setBusy] = React.useState(false)
@@ -265,12 +308,18 @@ window.__ModuleLoader__.load({
       const submit = async () => {
         setBusy(true)
         try {
+          const stdio = draft.kind === 'mcp' && draft.transport === 'stdio'
           await onSubmit({
             name: draft.name,
             title: draft.title,
             kind: draft.kind,
+            transport: stdio ? 'stdio' : 'streamable-http',
             url: draft.url,
             headers: textToHeaders(draft.headersText),
+            command: stdio ? draft.command : '',
+            args: stdio ? draft.argsText.split('\n').map(line => line.trim()).filter(Boolean) : [],
+            env: stdio ? textToEnv(draft.envText) : {},
+            cwd: stdio ? draft.cwd : '',
             enabled: draft.enabled,
           })
         } finally {
@@ -289,6 +338,18 @@ window.__ModuleLoader__.load({
             h('option', { key: 'rest', value: 'rest' }, tr('kindRest')),
           ]),
         ]),
+        draft.kind === 'mcp'
+          ? h('div', { key: 'tr', className: 'ch-field' }, [
+            h('span', { key: 'l', className: 'ch-label' }, tr('transport')),
+            h('select', {
+              key: 'i', className: 'ch-input', value: draft.transport, disabled: locked,
+              onChange: event => set({ transport: event.target.value }),
+            }, [
+              h('option', { key: 'http', value: 'streamable-http' }, tr('transportHttp')),
+              h('option', { key: 'stdio', value: 'stdio' }, tr('transportStdio')),
+            ]),
+          ])
+          : null,
         h('div', { key: 'n', className: 'ch-field' }, [
           h('span', { key: 'l', className: 'ch-label' }, tr('serverName')),
           h('input', {
@@ -307,25 +368,69 @@ window.__ModuleLoader__.load({
             onChange: event => set({ title: event.target.value }),
           }),
         ]),
-        h('div', { key: 'u', className: 'ch-field' }, [
-          h('span', { key: 'l', className: 'ch-label' }, tr('url')),
-          h('input', {
-            key: 'i', className: 'ch-input ch-mono', value: draft.url,
-            placeholder: draft.kind === 'rest' ? 'http://localhost:8081/api' : 'http://localhost:8080/api/mcp',
-            onChange: event => set({ url: event.target.value }),
-          }),
-        ]),
-        h('div', { key: 'h', className: 'ch-field' }, [
-          h('span', { key: 'l', className: 'ch-label' }, tr('headers')),
-          h('textarea', {
-            key: 'i', className: 'ch-input ch-textarea', value: draft.headersText,
-            placeholder: tr('headersHint'),
-            onChange: event => set({ headersText: event.target.value }),
-          }),
-        ]),
+        draft.kind === 'mcp' && draft.transport === 'stdio'
+          ? h('div', { key: 'cmd', className: 'ch-field' }, [
+            h('span', { key: 'l', className: 'ch-label' }, tr('command')),
+            h('input', {
+              key: 'i', className: 'ch-input ch-mono', value: draft.command,
+              placeholder: 'npx',
+              onChange: event => set({ command: event.target.value }),
+            }),
+          ])
+          : null,
+        draft.kind === 'mcp' && draft.transport === 'stdio'
+          ? h('div', { key: 'args', className: 'ch-field' }, [
+            h('span', { key: 'l', className: 'ch-label' }, tr('args')),
+            h('textarea', {
+              key: 'i', className: 'ch-input ch-textarea', value: draft.argsText,
+              placeholder: tr('argsHint'),
+              onChange: event => set({ argsText: event.target.value }),
+            }),
+          ])
+          : null,
+        draft.kind === 'mcp' && draft.transport === 'stdio'
+          ? h('div', { key: 'env', className: 'ch-field' }, [
+            h('span', { key: 'l', className: 'ch-label' }, tr('env')),
+            h('textarea', {
+              key: 'i', className: 'ch-input ch-textarea', value: draft.envText,
+              placeholder: tr('envHint'),
+              onChange: event => set({ envText: event.target.value }),
+            }),
+          ])
+          : null,
+        draft.kind === 'mcp' && draft.transport === 'stdio'
+          ? h('div', { key: 'cwd', className: 'ch-field' }, [
+            h('span', { key: 'l', className: 'ch-label' }, tr('cwd')),
+            h('input', {
+              key: 'i', className: 'ch-input ch-mono', value: draft.cwd,
+              placeholder: tr('cwdHint'),
+              onChange: event => set({ cwd: event.target.value }),
+            }),
+          ])
+          : null,
+        draft.kind === 'mcp' && draft.transport === 'stdio'
+          ? null
+          : h('div', { key: 'u', className: 'ch-field' }, [
+            h('span', { key: 'l', className: 'ch-label' }, tr('url')),
+            h('input', {
+              key: 'i', className: 'ch-input ch-mono', value: draft.url,
+              placeholder: draft.kind === 'rest' ? 'http://localhost:8081/api' : 'http://localhost:8080/api/mcp',
+              onChange: event => set({ url: event.target.value }),
+            }),
+          ]),
+        draft.kind === 'mcp' && draft.transport === 'stdio'
+          ? null
+          : h('div', { key: 'h', className: 'ch-field' }, [
+            h('span', { key: 'l', className: 'ch-label' }, tr('headers')),
+            h('textarea', {
+              key: 'i', className: 'ch-input ch-textarea', value: draft.headersText,
+              placeholder: tr('headersHint'),
+              onChange: event => set({ headersText: event.target.value }),
+            }),
+          ]),
         h('div', { key: 'a', className: 'ch-form-actions' }, [
           h('button', { key: 'c', type: 'button', className: 'ch-btn', disabled: busy, onClick: onCancel }, tr('cancel')),
-          h('button', { key: 's', type: 'button', className: 'ch-btn ch-btn-primary', disabled: busy || draft.name.trim() === '' || draft.url.trim() === '', onClick: () => { void submit() } }, busy ? '…' : tr('save')),
+          h('button', { key: 's', type: 'button', className: 'ch-btn ch-btn-primary', disabled: busy || draft.name.trim() === '' || (draft.kind === 'mcp' && draft.transport === 'stdio' ? draft.command.trim() === '' : draft.url.trim() === ''), onClick: () => { void submit() } }, busy ? '…' : tr('save')),
         ]),
       ])
     }
@@ -385,6 +490,9 @@ window.__ModuleLoader__.load({
         h('div', { key: 'head', className: 'ch-card-head' }, [
           h('span', { key: 't', className: 'ch-card-title' }, connector.title || connector.name),
           h('span', { key: 'kind', className: 'ch-badge ch-badge-kind' }, isMcp ? tr('kindMcp') : tr('kindRest')),
+          isMcp
+            ? h('span', { key: 'tr', className: 'ch-badge' }, connector.transport === 'stdio' ? tr('transportStdioTag') : tr('transportHttpTag'))
+            : null,
           connector.builtin ? h('span', { key: 'bl', className: 'ch-badge' }, tr('builtinTag')) : null,
           connector.enabled ? null : h('span', { key: 'off', className: 'ch-badge ch-badge-warn' }, tr('disabledTag')),
           h('span', { key: 'act', className: 'ch-card-actions' }, [
@@ -398,13 +506,19 @@ window.__ModuleLoader__.load({
         h('div', { key: 'kv', className: 'ch-kv' }, [
           h('span', { key: 'k1', className: 'ch-k' }, tr('serverName')),
           h('span', { key: 'v1', className: 'ch-v ch-mono' }, connector.name),
-          h('span', { key: 'k2', className: 'ch-k' }, tr('url')),
-          h('span', { key: 'v2', className: 'ch-v ch-mono' }, connector.url || '—'),
+          h('span', { key: 'k2', className: 'ch-k' }, isMcp && connector.transport === 'stdio' ? tr('command') : tr('url')),
+          h('span', { key: 'v2', className: 'ch-v ch-mono' }, isMcp && connector.transport === 'stdio'
+            ? ([connector.command, ...(connector.args ?? [])].filter(Boolean).join(' ') || '—')
+            : (connector.url || '—')),
           h('span', { key: 'k3', className: 'ch-k' }, tr('headers')),
           h('span', { key: 'v3', className: 'ch-v' }, connector.headerCount > 0 ? tr('headersCount', { count: connector.headerCount }) : tr('noHeaders')),
         ]),
         h('div', { key: 'foot', className: 'ch-card-foot' }, [
-          h('button', { key: 'test', type: 'button', className: 'ch-btn', disabled: busy || !connector.url, onClick: run },
+          h('button', {
+            key: 'test', type: 'button', className: 'ch-btn',
+            disabled: busy || (isMcp && connector.transport === 'stdio' ? !connector.command : !connector.url),
+            onClick: run,
+          },
             busy ? tr('testing') : tr('test')),
           statusNode,
         ]),

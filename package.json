@@ -1,6 +1,6 @@
 {
   "name": "my-dsh-connector-hub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "Connectors panel: lists the MCP servers configured for this deployment and probes them",
   "type": "module",
@@ -19,7 +19,9 @@
     "README.md"
   ],
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,

@@ -16,13 +16,14 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 
 export const name = 'connector-hub'
 
 /** Client 页面读取的私有路由。 */
 const HTTP_PATH = '/api/connector-hub'
 /** Host 构建标记，页脚用它确认页面连的是哪份 Host half。 */
-const HOST_REVISION = '2026-11-15.1'
+const HOST_REVISION = '2026-11-16.1'
 /** MCP 探测超时。 */
 const PROBE_TIMEOUT_MS = 20000
 /** REST 探测超时。 */
@@ -106,13 +107,21 @@ function start(ctx, config) {
   const managerRef = { value: undefined }
   const manager = () => managerRef.value
 
-  /** 一条清单项（统一字段）。 */
+  /** 传输方式：MCP 支持流式 HTTP 与本地 stdio 子进程。 */
+  const normalizeTransport = (value) => (value === 'stdio' ? 'stdio' : 'streamable-http')
+
+  /** 一条清单项（统一字段）。stdio 字段只在 transport === 'stdio' 时有效。 */
   const entryOfItem = (item) => ({
     name: normalizeName(item?.name),
     title: typeof item?.title === 'string' ? item.title : '',
     kind: normalizeKind(item?.kind),
+    transport: normalizeTransport(item?.transport),
     url: typeof item?.url === 'string' ? item.url.trim() : '',
     headers: item?.headers !== null && typeof item?.headers === 'object' ? { ...item.headers } : {},
+    command: typeof item?.command === 'string' ? item.command.trim() : '',
+    args: Array.isArray(item?.args) ? item.args.map(arg => String(arg)) : [],
+    env: item?.env !== null && typeof item?.env === 'object' ? { ...item.env } : {},
+    cwd: typeof item?.cwd === 'string' ? item.cwd.trim() : '',
     enabled: item?.enabled !== false,
   })
 
@@ -134,9 +143,14 @@ function start(ctx, config) {
     if (preset === undefined) return false
     return preset.kind !== connector.kind
       || preset.title !== connector.title
+      || preset.transport !== connector.transport
       || preset.url !== connector.url
       || preset.enabled !== connector.enabled
       || JSON.stringify(preset.headers ?? {}) !== JSON.stringify(connector.headers ?? {})
+      || preset.command !== connector.command
+      || JSON.stringify(preset.args ?? []) !== JSON.stringify(connector.args ?? [])
+      || JSON.stringify(preset.env ?? {}) !== JSON.stringify(connector.env ?? {})
+      || preset.cwd !== connector.cwd
   }
 
   /** 落盘。 */
@@ -190,15 +204,30 @@ function start(ctx, config) {
     saveToDisk()
   }
 
-  /** 给 mcpManager 的配置。 */
-  const managerEntryOf = (connector) => ({
-    transport: 'streamable-http',
-    url: connector.url,
-    headers: connector.headers,
-    enabled: connector.enabled,
-    toolCallTimeoutMs: 120000,
-    closeTimeoutMs: 10000,
-  })
+  /**
+   * 给 mcpManager 的配置。
+   * mcp-manager 对两种传输的字段是互斥校验的（stdio 不许带 url/headers，
+   * streamable-http 不许带 command/args/env/cwd），所以这里必须按传输方式裁剪。
+   */
+  const managerEntryOf = (connector) => (connector.transport === 'stdio'
+    ? {
+      transport: 'stdio',
+      command: connector.command,
+      args: connector.args,
+      env: connector.env,
+      cwd: connector.cwd,
+      enabled: connector.enabled,
+      toolCallTimeoutMs: 120000,
+      closeTimeoutMs: 10000,
+    }
+    : {
+      transport: 'streamable-http',
+      url: connector.url,
+      headers: connector.headers,
+      enabled: connector.enabled,
+      toolCallTimeoutMs: 120000,
+      closeTimeoutMs: 10000,
+    })
 
   /** 把清单同步给 MCP 管理器：只有 mcp 类型的启用项才注册。 */
   const reconcile = () => {
@@ -259,9 +288,14 @@ function start(ctx, config) {
         name: connector.name,
         title: connector.title,
         kind: connector.kind,
+        transport: connector.transport,
         url: connector.url,
         headers: connector.headers,
         headerCount: Object.keys(connector.headers ?? {}).length,
+        command: connector.command,
+        args: connector.args,
+        env: connector.env,
+        cwd: connector.cwd,
         enabled: connector.enabled,
         builtin: connector.builtin === true,
         dirty: isDirty(connector),
@@ -366,9 +400,61 @@ function start(ctx, config) {
     }
   }
 
+  /**
+   * stdio 探测。
+   * - 已启用并在管理器里注册过 → 走 mcpManager.probe()，真实起进程、列工具；
+   * - 还没注册（停用 / 刚编辑过）→ 只校验命令能否解析，说明启用后才会建立连接。
+   */
+  const probeStdio = async (connector) => {
+    if (typeof connector.command !== 'string' || connector.command.trim() === '') {
+      return { ok: false, transport: 'stdio', error: 'stdio 连接器缺少命令' }
+    }
+    const mgr = manager()
+    if (registered.has(connector.name) && mgr !== undefined && typeof mgr.probe === 'function') {
+      try {
+        const outcome = await mgr.probe(connector.name, { timeoutMs: PROBE_TIMEOUT_MS })
+        const names = Array.isArray(outcome?.toolNames) ? outcome.toolNames : []
+        if (outcome?.ok === true) {
+          return {
+            ok: true,
+            kind: 'mcp',
+            transport: 'stdio',
+            serverName: outcome?.serverInfo?.name ?? '',
+            toolCount: names.length,
+            tools: names.slice(0, MAX_TOOLS).map(name => ({ name, description: '' })),
+          }
+        }
+        return {
+          ok: false,
+          transport: 'stdio',
+          stage: outcome?.stage ?? '',
+          error: outcome?.message ?? 'stdio 探测失败',
+        }
+      } catch (error) {
+        return { ok: false, transport: 'stdio', error: describe(error) }
+      }
+    }
+    // 未注册：只验证命令存在（Windows 用 where，其它平台用 which）
+    const command = connector.command.trim()
+    const finder = process.platform === 'win32' ? 'where.exe' : 'which'
+    const found = spawnSync(finder, [command], { encoding: 'utf8', windowsHide: true })
+    const ok = found.status === 0
+    return {
+      ok,
+      kind: 'mcp',
+      transport: 'stdio',
+      verified: 'command',
+      command,
+      note: ok ? '命令可执行；启用后由 MCP 管理器建立连接并加载工具' : '找不到该命令',
+      toolCount: 0,
+      tools: [],
+    }
+  }
+
   /** 按类型探测。 */
   const probe = (connector) => {
     if (connector === undefined) return Promise.resolve({ ok: false, error: '没有可探测的地址' })
+    if (connector.kind === 'mcp' && connector.transport === 'stdio') return probeStdio(connector)
     if (typeof connector.url !== 'string' || connector.url === '') {
       return Promise.resolve({ ok: false, error: '没有可探测的地址' })
     }
@@ -391,7 +477,11 @@ function start(ctx, config) {
       const base = entryOfItem(item)
       if (seen.has(base.name)) throw new Error(`连接器名字重复：${base.name}`)
       seen.add(base.name)
-      if (base.url === '') throw new Error(`连接器 ${base.name} 缺少地址`)
+      if (base.kind === 'mcp' && base.transport === 'stdio') {
+        if (base.command === '') throw new Error(`连接器 ${base.name} 缺少启动命令`)
+      } else if (base.url === '') {
+        throw new Error(`连接器 ${base.name} 缺少地址`)
+      }
       // 内置连接器的类型与名字不允许改
       if (builtins.includes(base.name)) {
         const current = connectors.find(c => c.name === base.name)
@@ -414,8 +504,13 @@ function start(ctx, config) {
     if (preset === undefined) throw new Error('这条连接器没有默认值')
     target.kind = preset.kind
     target.title = preset.title
+    target.transport = preset.transport
     target.url = preset.url
     target.headers = { ...preset.headers }
+    target.command = preset.command
+    target.args = [...preset.args]
+    target.env = { ...preset.env }
+    target.cwd = preset.cwd
     target.enabled = preset.enabled
     saveToDisk()
     reconcile()
