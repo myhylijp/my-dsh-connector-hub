@@ -3,6 +3,10 @@
   "version": "0.2.0",
   "license": "MIT",
   "description": "Connectors panel: lists the MCP servers configured for this deployment and probes them",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/myhylijp/my-dsh-connector-hub.git"
+  },
   "type": "module",
   "exports": {
     ".": "./host.js",
