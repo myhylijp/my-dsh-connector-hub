@@ -5,6 +5,20 @@
 左侧栏 **连接器** 页：卡片列出这份部署的外部服务，可新增 / 编辑 / 删除；MCP 连接器能「测试连接」
 并读出工具清单（名字 + 说明），RESTful API 只登记基地址与请求头，供后续插件读取。
 
+## 安装
+
+任选一种。`--profile` 后面换成你自己在用的 profile：桌面版通常是 `desktop`，`dsh web` 通常是 `web`。
+
+```powershell
+# 从 npm 安装（预构建，最快）
+dsh plugin --profile web add my-dsh-connector-hub
+
+# 从 GitHub 源码安装
+dsh plugin --profile web add github:myhylijp/my-dsh-connector-hub
+```
+
+也可以在插件市场里直接搜索安装：dsh-market 和 [开放插件市场](https://dshopen.org/zh/plugins/my-dsh-connector-hub/) 都已收录。装完后如果「插件」页里没有出现，重启一次 `dsh web`。
+
 ## 两种连接类型
 
 | 类型 | `kind` | 含义 | 生效方式 |
