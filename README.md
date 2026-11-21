@@ -1,6 +1,6 @@
 # my-dsh-connector-hub
 
-[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com) [![开放插件市场](https://img.shields.io/endpoint?url=https%3A%2F%2Fdshopen.org%2Fbadge%2Fmy-dsh-connector-hub.json)](https://dshopen.org/zh/plugins/my-dsh-connector-hub/)
 
 左侧栏 **连接器** 页：卡片列出这份部署的外部服务，可新增 / 编辑 / 删除；MCP 连接器能「测试连接」
 并读出工具清单（名字 + 说明），RESTful API 只登记基地址与请求头，供后续插件读取。
